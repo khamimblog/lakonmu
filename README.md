@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lakonmu
 
-## Getting Started
+A daily productivity tracker: start an activity, pause/resume it, and when you finish, write down what you learned. Reflections become a searchable memory (Phase 2), the source for AI assessments (Phase 3), and the data behind a chat assistant (Phase 4).
 
-First, run the development server:
+Roadmap and progress: [`phases/`](phases/README.md).
+
+## Stack
+
+Next.js 16 (App Router, Cache Components) · bun · shadcn/ui · Turso (libSQL) + Drizzle · Firebase Auth (Google) · Gemini · Railway
+
+## Run locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+bun install
+cp .env.example .env.local      # fill in Firebase values, or set AUTH_DEV_BYPASS=true
+bun run db:migrate              # creates local.db (libSQL file, vector-capable)
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+With `AUTH_DEV_BYPASS=true` you're signed in as a fake "Dev User" (development only, ignored in production builds).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Script | What it does |
+| --- | --- |
+| `bun dev` | Dev server |
+| `bun run build` / `bun start` | Production build / serve |
+| `bun test` | Time helpers + activity lifecycle tests (uses a temp database) |
+| `bun run lint` / `bun run typecheck` | ESLint / TypeScript |
+| `bun run db:generate` | New migration after editing a file in `src/db/schema/` |
+| `bun run db:migrate` | Apply migrations (local file or Turso, based on env) |
+| `bun run db:studio` | Drizzle Studio |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Set up Firebase (Google sign-in)
 
-## Learn More
+1. Create a Firebase project → **Authentication** → enable **Google**.
+2. **Authentication → Settings → Authorized domains**: add `localhost` and your Railway domain (and later `lakonmu.com`).
+3. **Project settings → General → Your apps → Web app**: copy the values into `NEXT_PUBLIC_FIREBASE_*`.
+4. **Project settings → Service accounts → Generate new private key**: copy `project_id`, `client_email`, `private_key` into `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`.
 
-To learn more about Next.js, take a look at the following resources:
+Sign-in flow: Google popup → ID token → `POST /api/auth/session` verifies it with Firebase Admin and sets an httpOnly `__session` cookie (14 days). The server reads only that cookie.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Set up Turso
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+turso db create lakonmu
+turso db show lakonmu --url        # → TURSO_DATABASE_URL
+turso db tokens create lakonmu     # → TURSO_AUTH_TOKEN
+```
 
-## Deploy on Vercel
+## Deploy to Railway
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. New project → deploy from this repo. Railway detects bun from `bun.lock`.
+2. Add every variable from `.env.example` (leave `AUTH_DEV_BYPASS` unset).
+3. `railway.json` runs `bun run db:migrate` before each deploy, then `bun run start`. Health check: `/api/health`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## How tracking works
+
+- An activity belongs to the day it started in your timezone (saved from the browser at sign-in).
+- Time is stored as segments; pausing closes a segment, resuming opens a new one, so paused time isn't counted.
+- Only one activity runs at a time; starting or resuming another pauses the current one.
+- Anything still open at 23:59:59 is finished automatically and listed as waiting for a reflection.
+
+Code map: rules live in `src/lib/services/activities.ts` (shared by server actions now and the public API later), schema in `src/db/schema/` (one `*.schema.ts` per area), UI in `src/app/(app)/tracker/`.
